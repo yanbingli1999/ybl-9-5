@@ -152,6 +152,9 @@ export interface Trip {
   totalCost: number;
   windAlignment?: 'tailwind' | 'headwind' | 'crosswind' | 'calm';
   windAlignmentLabel?: string;
+  totalTripHours?: number;
+  windDamageModifier?: number;
+  windPirateModifier?: number;
   waitedForWind?: boolean;
   waitHours?: number;
 }

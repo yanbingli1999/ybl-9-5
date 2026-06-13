@@ -24,6 +24,7 @@ const RoutePlanner = () => {
     waitForWind,
     isDispatching,
     isWaitingForWind,
+    lastWaitResult,
     error,
   } = useGameStore();
   
@@ -495,16 +496,26 @@ const RoutePlanner = () => {
                   
                   {currentRouteWindAnalysis && currentRouteWindAnalysis.isWaterRoute && !currentRouteWindAnalysis.recommended && currentRouteWindAnalysis.waitHours > 0 && (
                     <div className="pt-4 border-t border-slate-100 space-y-2">
+                      {lastWaitResult && (
+                        <div className={`p-2.5 text-xs rounded-lg border flex items-start gap-1.5 ${
+                          lastWaitResult.success
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>
+                          {lastWaitResult.success ? '✅' : '⚠️'}
+                          <span>{lastWaitResult.description}</span>
+                        </div>
+                      )}
                       <button
                         onClick={handleWaitForWind}
                         disabled={isWaitingForWind || isDispatching}
                         className="w-full py-2.5 bg-gradient-to-r from-sky-500 to-blue-500 text-white font-medium rounded-lg hover:from-sky-400 hover:to-blue-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
                       >
                         <Pause className="w-4 h-4" />
-                        {isWaitingForWind ? '候风中...' : `等待约 ${currentRouteWindAnalysis.waitHours} 小时候顺风`}
+                        {isWaitingForWind ? '候风中...' : `候风至顺风（最多 ${currentRouteWindAnalysis.waitHours} 小时）`}
                       </button>
                       <p className="text-xs text-slate-500 text-center">
-                        等待消耗交货期限，但可能换来更稳收益
+                        每 6 小时观察一次风况，逢顺风/涨潮立即出发；等待消耗交货期限
                       </p>
                       {hasLandAlternative && (
                         <p className="text-xs text-amber-600 text-center flex items-center justify-center gap-1">

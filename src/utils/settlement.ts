@@ -50,7 +50,8 @@ export const calculateActualDamage = (
   weather: Weather,
   routeCondition: number,
   isOverloaded: boolean,
-  events: GameEvent[]
+  events: GameEvent[],
+  windDamageModifier: number = 1.0
 ): number => {
   const baseFragility = commission.fragility / 100;
   const weatherDamage = weather.damageChance;
@@ -67,12 +68,12 @@ export const calculateActualDamage = (
   });
   
   const totalDamageChance = Math.min(0.95,
-    baseFragility * (1 + weatherDamage) * (1 + roadCondition) * (1 + overloadFactor) + eventDamage
+    baseFragility * (1 + weatherDamage) * (1 + roadCondition) * (1 + overloadFactor) * windDamageModifier + eventDamage
   );
   
   const random = Math.random();
   if (random < totalDamageChance) {
-    const maxDamage = Math.ceil(commission.quantity * 0.4);
+    const maxDamage = Math.ceil(commission.quantity * 0.4 * windDamageModifier);
     return Math.floor(Math.random() * maxDamage) + 1;
   }
   
@@ -88,7 +89,8 @@ export const settleTrip = (
   isOverloaded: boolean,
   eventEffects: { title: string; effect: any }[],
   reputationBonus: number,
-  totalTripHours: number
+  totalTripHours: number,
+  windDamageModifier: number = 1.0
 ): TripSettlement => {
   let totalIncome = 0;
   let totalExpense = trip.totalCost;
@@ -98,7 +100,6 @@ export const settleTrip = (
   const eventDescriptions: string[] = [];
   
   let extraDelay = 0;
-  let extraGoldFromEvents = 0;
   eventEffects.forEach(item => {
     const { title, effect } = item;
     if (effect.type === 'delay') {
@@ -108,7 +109,6 @@ export const settleTrip = (
       reputationChange += effect.value as number;
     }
     if (effect.type === 'gold') {
-      extraGoldFromEvents += effect.value as number;
       if ((effect.value as number) < 0) {
         totalExpense += Math.abs(effect.value as number);
       } else {
@@ -134,7 +134,8 @@ export const settleTrip = (
       weather,
       routeCondition,
       isOverloaded,
-      relevantEvents
+      relevantEvents,
+      windDamageModifier
     );
     const delivered = commission.quantity - damaged;
     

@@ -32,6 +32,7 @@ import {
 import {
   generateWindCondition,
   analyzeRouteWind,
+  getWindConditionSummary,
 } from '../utils/windCalc';
 import {
   calculateReputationGrade,
@@ -79,6 +80,7 @@ interface GameState {
   isDispatching: boolean;
   isWaitingForWind: boolean;
   error: string | null;
+  lastWaitResult: { success: boolean; waitedHours: number; description: string } | null;
   
   loadGameData: () => Promise<void>;
   loadSaveGame: () => Promise<void>;
@@ -145,6 +147,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   isDispatching: false,
   isWaitingForWind: false,
   error: null,
+  lastWaitResult: null,
   
   loadGameData: async () => {
     set({ isLoading: true, error: null });
@@ -446,8 +449,11 @@ export const useGameStore = create<GameState>((set, get) => ({
         events: [],
         eventEffects: [],
         totalCost: tripCost,
+        totalTripHours: routeCalc.totalTime,
         windAlignment: windAnalysis?.alignment,
         windAlignmentLabel: windAnalysis?.alignmentLabel,
+        windDamageModifier: windAnalysis?.damageModifier ?? 1.0,
+        windPirateModifier: windAnalysis?.pirateModifier ?? 1.0,
       };
       
       const updatedVehicles = state.vehicles.map(v =>
@@ -480,32 +486,46 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
   
-  waitForWind: async (waitHours: number) => {
+  waitForWind: async (maxWaitHours: number) => {
     if (get().isWaitingForWind) return false;
-    if (waitHours <= 0) return false;
+    if (maxWaitHours <= 0) return false;
     set({ isWaitingForWind: true, error: null });
     
     try {
       const state = get();
-      let remainingHours = waitHours;
-      let currentPlayer = { ...state.player };
+      const route = state.routes.find(r => r.id === state.selectedRoute);
       
-      const timeOrder: Array<'morning' | 'afternoon' | 'evening' | 'night'> = ['morning', 'afternoon', 'evening', 'night'];
+      if (!route || route.type !== 'water') {
+        set({ error: '请先选择一条水路运输路线再候风' });
+        return false;
+      }
+      
+      const safeMax = Math.min(Math.max(maxWaitHours, 6), 168);
       const hoursPerSlot = 6;
-      
-      let newWind: WindCondition | null = state.currentWind;
+      let remainingHours = safeMax;
+      let currentPlayer = { ...state.player };
+      let newWind: WindCondition = state.currentWind || generateWindCondition(currentPlayer.currentDay, currentPlayer.timeOfDay);
       let weatherChanged = false;
+      let reachedGoodCondition = false;
       
-      while (remainingHours > 0) {
-        const advanceSlots = Math.min(Math.ceil(remainingHours / hoursPerSlot), timeOrder.length);
-        for (let i = 0; i < advanceSlots && remainingHours > 0; i++) {
-          currentPlayer = advanceTime(currentPlayer);
-          remainingHours -= hoursPerSlot;
-          if (currentPlayer.timeOfDay === 'morning') {
-            weatherChanged = true;
-          }
+      const initialAnalysis = analyzeRouteWind(route, newWind, state.cities, 'yuegang');
+      if (initialAnalysis.isWaterRoute && initialAnalysis.recommended) {
+        reachedGoodCondition = true;
+      }
+      
+      while (!reachedGoodCondition && remainingHours > 0) {
+        currentPlayer = advanceTime(currentPlayer);
+        if (currentPlayer.timeOfDay === 'morning') {
+          weatherChanged = true;
         }
         newWind = generateWindCondition(currentPlayer.currentDay, currentPlayer.timeOfDay);
+        remainingHours -= hoursPerSlot;
+        
+        const analysis = analyzeRouteWind(route, newWind, state.cities, 'yuegang');
+        if (analysis.isWaterRoute && analysis.recommended) {
+          reachedGoodCondition = true;
+          break;
+        }
       }
       
       let newWeather = state.currentWeather;
@@ -513,7 +533,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         newWeather = getRandomWeather(state.weatherList);
       }
       
-      const newState = get();
+      const actualWaitHours = safeMax - remainingHours;
+      
       set({
         player: currentPlayer,
         currentWind: newWind,
@@ -521,7 +542,14 @@ export const useGameStore = create<GameState>((set, get) => ({
         commissions: weatherChanged ? (() => {
           get().generateDailyCommissions();
           return get().commissions;
-        })() : newState.commissions,
+        })() : state.commissions,
+        lastWaitResult: {
+          success: reachedGoodCondition,
+          waitedHours: actualWaitHours,
+          description: reachedGoodCondition
+            ? `候风 ${actualWaitHours} 小时后，出现${getWindConditionSummary(newWind)}，适合出发`
+            : `候风 ${actualWaitHours} 小时，仍未等到理想风候，建议改走陆路或继续等待`,
+        },
       });
       
       await get().saveGame();
@@ -539,7 +567,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const route = state.routes.find(r => r.id === trip.routeId);
     if (!route) return;
     
-    const pirateModifier = state.currentPirateModifier || 1.0;
+    const pirateModifier = trip.windPirateModifier ?? state.currentPirateModifier ?? 1.0;
     const allEvents = getRandomEvents(state.eventsList, route.type, 2, pirateModifier);
     
     set({
@@ -673,7 +701,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     
     const loadCalc = calculateLoad(vehicle, commissions, state.goodsList);
     
-    const routeCalc = calculateRouteTime(route, vehicle, weather);
+    const totalTripHours = typeof trip.totalTripHours === 'number'
+      ? trip.totalTripHours
+      : (trip.etaGameHours ?? 0) - (trip.departureGameHours ?? 0);
+    
+    const windDamageModifier = trip.windDamageModifier ?? 1.0;
     
     const settlement = settleTrip(
       trip,
@@ -684,7 +716,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       loadCalc.isOverloaded,
       trip.eventEffects,
       state.player.priceBonus,
-      routeCalc.totalTime
+      totalTripHours,
+      windDamageModifier
     );
     
     const ledgerEntries = generateLedgerEntries(
