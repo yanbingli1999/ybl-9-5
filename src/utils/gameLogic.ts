@@ -90,7 +90,8 @@ export const getRandomWeather = (weatherList: Weather[]): Weather => {
 export const getRandomEvents = (
   eventsList: GameEvent[],
   routeType: 'land' | 'water',
-  count: number = 2
+  count: number = 2,
+  pirateModifier: number = 1.0
 ): GameEvent[] => {
   const filteredEvents = eventsList.filter(e => {
     if (routeType === 'water' && e.id === 'bandit') return false;
@@ -103,7 +104,11 @@ export const getRandomEvents = (
   
   for (const event of shuffled) {
     if (selected.length >= count) break;
-    if (Math.random() < event.probability * 2) {
+    let prob = event.probability * 2;
+    if (event.id === 'pirate') {
+      prob = event.probability * 2 * pirateModifier;
+    }
+    if (Math.random() < prob) {
       selected.push(event);
     }
   }

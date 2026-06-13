@@ -2,7 +2,7 @@ import { Truck, Clock, MapPin, AlertTriangle } from 'lucide-react';
 import { useGameStore } from '../../store/useGameStore';
 
 const TransportManager = () => {
-  const { trips, vehicles, routes, cities, commissions, goodsList, currentWeather } = useGameStore();
+  const { trips, vehicles, routes, cities, commissions, goodsList, currentWeather, currentWind } = useGameStore();
   
   const inProgressTrips = trips.filter(t => t.status === 'in_progress');
   const completedTrips = trips.filter(t => t.status === 'completed').slice(-5);
@@ -38,6 +38,53 @@ const TransportManager = () => {
     return { vehicle, route, destCity, tripCommissions };
   };
 
+  const getWindBadge = (alignment?: string, label?: string) => {
+    if (!alignment) return null;
+    let style = '';
+    let icon = '';
+    switch (alignment) {
+      case 'tailwind':
+        style = 'bg-emerald-100 text-emerald-700 border-emerald-200';
+        icon = '⛵';
+        break;
+      case 'headwind':
+        style = 'bg-red-100 text-red-700 border-red-200';
+        icon = '🌀';
+        break;
+      case 'crosswind':
+        style = 'bg-amber-100 text-amber-700 border-amber-200';
+        icon = '↔️';
+        break;
+      default:
+        style = 'bg-slate-100 text-slate-700 border-slate-200';
+        icon = '🌊';
+    }
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${style}`}>
+        <span>{icon}</span>
+        {label || alignment}
+      </span>
+    );
+  };
+
+  const getWindSummary = () => {
+    if (!currentWind) return null;
+    const dirNames: Record<string, string> = {
+      N: '北', NE: '东北', E: '东', SE: '东南', S: '南', SW: '西南', W: '西', NW: '西北'
+    };
+    const strNames: Record<string, string> = {
+      calm: '无风', light: '轻风', moderate: '和风', strong: '劲风', gale: '狂风'
+    };
+    const tideNames: Record<string, string> = {
+      high: '满潮', rising: '涨潮', low: '枯潮', falling: '退潮'
+    };
+    const monsoonNames: Record<string, string> = {
+      northeast: '东北季风期', southwest: '西南季风期', transition: '季风转换期'
+    };
+    const wind = currentWind as any;
+    return `${strNames[wind.strength] || wind.strength}${dirNames[wind.direction] || wind.direction} · ${tideNames[wind.tide] || wind.tide} · ${monsoonNames[wind.monsoonSeason] || wind.monsoonSeason}`;
+  };
+
   return (
     <div className="p-6">
       <div className="max-w-7xl mx-auto">
@@ -46,15 +93,30 @@ const TransportManager = () => {
           <p className="text-slate-500">查看和管理正在进行的运输任务</p>
         </div>
         
-        {currentWeather && (
-          <div className="mb-6 p-4 bg-sky-50 border border-sky-200 rounded-xl flex items-center gap-3">
-            <span className="text-3xl">{currentWeather.icon}</span>
-            <div>
-              <p className="font-medium text-sky-800">当前天气: {currentWeather.name}</p>
-              <p className="text-sm text-sky-600">{currentWeather.description}</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {currentWeather && (
+            <div className="p-4 bg-sky-50 border border-sky-200 rounded-xl flex items-center gap-3">
+              <span className="text-3xl">{currentWeather.icon}</span>
+              <div>
+                <p className="font-medium text-sky-800">当前天气: {currentWeather.name}</p>
+                <p className="text-sm text-sky-600">{currentWeather.description}</p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+          {currentWind && (
+            <div className="p-4 bg-cyan-50 border border-cyan-200 rounded-xl flex items-center gap-3">
+              <span className="text-3xl">⚓</span>
+              <div>
+                <p className="font-medium text-cyan-800">风候潮汐: {getWindSummary()}</p>
+                <p className="text-sm text-cyan-600">第 {currentWind.updatedDay} 天 · {
+                  currentWind.updatedTimeOfDay === 'morning' ? '清晨' :
+                  currentWind.updatedTimeOfDay === 'afternoon' ? '午后' :
+                  currentWind.updatedTimeOfDay === 'evening' ? '傍晚' : '夜晚'
+                }</p>
+              </div>
+            </div>
+          )}
+        </div>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div>
@@ -78,18 +140,22 @@ const TransportManager = () => {
                     return sum + (c.quantity * (goods?.weight || 1));
                   }, 0);
                   
+                  const isWaterRoute = route?.type === 'water';
+                  
                   return (
                     <div key={trip.id} className="bg-white rounded-xl shadow-md p-5">
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex items-center gap-3">
                           <span className="text-3xl">{vehicle?.icon || '🚚'}</span>
                           <div>
-                            <div className="font-medium text-slate-800">
+                            <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
                               {vehicle?.name || '未知车辆'}
+                              {isWaterRoute && trip.windAlignmentLabel && getWindBadge(trip.windAlignment, trip.windAlignmentLabel)}
                             </div>
                             <div className="text-sm text-slate-500 flex items-center gap-1">
                               <MapPin className="w-3 h-3" />
                               前往 {destCity?.name || '未知目的地'}
+                              {isWaterRoute && <span className="text-cyan-600 ml-1">（水路）</span>}
                             </div>
                           </div>
                         </div>
@@ -108,7 +174,11 @@ const TransportManager = () => {
                           </div>
                           <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all"
+                              className={`h-full bg-gradient-to-r rounded-full transition-all ${
+                                isWaterRoute 
+                                  ? 'from-cyan-500 to-blue-500' 
+                                  : 'from-blue-500 to-indigo-500'
+                              }`}
                               style={{ width: `${trip.progress}%` }}
                             />
                           </div>
@@ -170,16 +240,18 @@ const TransportManager = () => {
             ) : (
               <div className="space-y-3">
                 {completedTrips.map(trip => {
-                  const { vehicle, destCity, tripCommissions } = getTripInfo(trip);
+                  const { vehicle, destCity, route, tripCommissions } = getTripInfo(trip);
+                  const isWaterRoute = route?.type === 'water';
                   
                   return (
                     <div key={trip.id} className="bg-white rounded-xl shadow-md p-4">
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xl">{vehicle?.icon || '🚚'}</span>
                           <span className="font-medium text-slate-800">
                             {vehicle?.name} → {destCity?.name}
                           </span>
+                          {isWaterRoute && trip.windAlignmentLabel && getWindBadge(trip.windAlignment, trip.windAlignmentLabel)}
                         </div>
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(trip.status)}`}>
                           {getStatusLabel(trip.status)}

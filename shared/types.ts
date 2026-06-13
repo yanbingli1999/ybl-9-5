@@ -7,6 +7,37 @@ export interface City {
   description: string;
 }
 
+export type WindDirection = 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW';
+
+export type WindStrength = 'calm' | 'light' | 'moderate' | 'strong' | 'gale';
+
+export type TidePhase = 'high' | 'rising' | 'low' | 'falling';
+
+export type MonsoonSeason = 'northeast' | 'southwest' | 'transition';
+
+export interface WindCondition {
+  direction: WindDirection;
+  strength: WindStrength;
+  tide: TidePhase;
+  monsoonSeason: MonsoonSeason;
+  updatedDay: number;
+  updatedTimeOfDay: 'morning' | 'afternoon' | 'evening' | 'night';
+}
+
+export type RouteWindAnalysis = {
+  isWaterRoute: boolean;
+  travelDirection: WindDirection;
+  alignment: 'tailwind' | 'headwind' | 'crosswind' | 'calm';
+  alignmentLabel: string;
+  timeModifier: number;
+  damageModifier: number;
+  pirateModifier: number;
+  tideModifier: number;
+  description: string;
+  recommended: boolean;
+  waitHours: number;
+};
+
 export interface Route {
   id: string;
   fromCityId: string;
@@ -119,6 +150,10 @@ export interface Trip {
   events: string[];
   eventEffects: { title: string; effect: any }[];
   totalCost: number;
+  windAlignment?: 'tailwind' | 'headwind' | 'crosswind' | 'calm';
+  windAlignmentLabel?: string;
+  waitedForWind?: boolean;
+  waitHours?: number;
 }
 
 export interface Warehouse {
@@ -161,6 +196,14 @@ export interface SaveGame {
   warehouse: Warehouse;
   ledger: LedgerEntry[];
   currentWeatherId: string;
+  currentWindCondition?: {
+    direction: WindDirection;
+    strength: WindStrength;
+    tide: TidePhase;
+    monsoonSeason: MonsoonSeason;
+    updatedDay: number;
+    updatedTimeOfDay: 'morning' | 'afternoon' | 'evening' | 'night';
+  };
   savedAt: number;
 }
 

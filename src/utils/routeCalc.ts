@@ -1,15 +1,19 @@
 import type { Route, Vehicle, Weather, Commission, Goods, PlayerVehicle } from '../../shared/types';
+import type { RouteWindAnalysis } from '../../shared/types';
 
 type VehicleLike = Vehicle | PlayerVehicle;
 
 export interface RouteCalculation {
   baseTime: number;
   weatherModifier: number;
+  windTimeModifier: number;
   vehicleSpeed: number;
   totalTime: number;
   stops: number;
   stopTime: number;
   distance: number;
+  windAlignment?: 'tailwind' | 'headwind' | 'crosswind' | 'calm';
+  windAlignmentLabel?: string;
 }
 
 export interface LoadCalculation {
@@ -32,7 +36,8 @@ export interface DamageCalculation {
 export const calculateRouteTime = (
   route: Route,
   vehicle: VehicleLike,
-  weather: Weather
+  weather: Weather,
+  windAnalysis?: RouteWindAnalysis
 ): RouteCalculation => {
   const baseTime = route.baseTimeHours;
   const weatherModifier = weather.speedModifier;
@@ -40,17 +45,22 @@ export const calculateRouteTime = (
   const stops = route.stops;
   const stopTime = stops * 2;
   
-  const adjustedTime = (route.distance / vehicleSpeed) * weatherModifier;
+  const windTimeModifier = windAnalysis?.timeModifier ?? 1.0;
+  
+  const adjustedTime = (route.distance / vehicleSpeed) * weatherModifier * windTimeModifier;
   const totalTime = Math.ceil(adjustedTime + stopTime);
   
   return {
     baseTime,
     weatherModifier,
+    windTimeModifier,
     vehicleSpeed,
     totalTime,
     stops,
     stopTime,
     distance: route.distance,
+    windAlignment: windAnalysis?.alignment,
+    windAlignmentLabel: windAnalysis?.alignmentLabel,
   };
 };
 
@@ -84,15 +94,17 @@ export const calculateDamageChance = (
   commission: Commission,
   route: Route,
   weather: Weather,
-  isOverloaded: boolean
+  isOverloaded: boolean,
+  windAnalysis?: RouteWindAnalysis
 ): DamageCalculation => {
   const baseFragility = commission.fragility / 100;
   const weatherDamage = weather.damageChance;
   const roadCondition = 1 - route.condition;
   const overloadFactor = isOverloaded ? 0.3 : 0;
+  const windDamage = (windAnalysis?.damageModifier ?? 1.0) - 1.0;
   
   const totalDamageChance = Math.min(0.95, 
-    baseFragility * (1 + weatherDamage) * (1 + roadCondition) * (1 + overloadFactor)
+    baseFragility * (1 + weatherDamage) * (1 + roadCondition) * (1 + overloadFactor) * (1 + windDamage)
   );
   
   const expectedDamage = Math.ceil(commission.quantity * totalDamageChance * 0.3);

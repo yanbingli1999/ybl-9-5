@@ -14,6 +14,8 @@ import type {
   Weather,
   GameEvent,
   ReputationGrade,
+  WindCondition,
+  RouteWindAnalysis,
 } from '../../shared/types';
 import { api } from '../services/api';
 import {
@@ -27,6 +29,10 @@ import {
   calculateWarehouseUsedSpace,
   calculateTotalGameHours,
 } from '../utils/gameLogic';
+import {
+  generateWindCondition,
+  analyzeRouteWind,
+} from '../utils/windCalc';
 import {
   calculateReputationGrade,
   settleTrip,
@@ -49,6 +55,7 @@ interface GameState {
   warehouse: Warehouse;
   ledger: LedgerEntry[];
   currentWeather: Weather | null;
+  currentWind: WindCondition | null;
   
   cities: City[];
   routes: Route[];
@@ -66,9 +73,11 @@ interface GameState {
   showEvent: boolean;
   currentTripId: string | null;
   pendingEvents: GameEvent[];
+  currentPirateModifier: number;
   
   isLoading: boolean;
   isDispatching: boolean;
+  isWaitingForWind: boolean;
   error: string | null;
   
   loadGameData: () => Promise<void>;
@@ -82,7 +91,10 @@ interface GameState {
   selectVehicle: (vehicleId: string) => void;
   selectRoute: (routeId: string) => void;
   
+  analyzeCurrentRouteWind: () => RouteWindAnalysis | null;
+  
   startTrip: () => Promise<boolean>;
+  waitForWind: (waitHours: number) => Promise<boolean>;
   processTripEvents: (tripId: string) => void;
   _processNextEvent: () => void;
   handleEventChoice: (choiceIndex: number) => void;
@@ -91,6 +103,7 @@ interface GameState {
   
   upgradeWarehouse: () => boolean;
   advanceTimeOfDay: () => void;
+  _refreshWindIfNeeded: () => void;
   
   updatePlayerGold: (amount: number) => void;
   updatePlayerReputation: (amount: number) => void;
@@ -108,6 +121,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   warehouse: createInitialSaveGame().warehouse,
   ledger: [],
   currentWeather: null,
+  currentWind: null,
   
   cities: [],
   routes: [],
@@ -125,9 +139,11 @@ export const useGameStore = create<GameState>((set, get) => ({
   showEvent: false,
   currentTripId: null,
   pendingEvents: [],
+  currentPirateModifier: 1.0,
   
   isLoading: false,
   isDispatching: false,
+  isWaitingForWind: false,
   error: null,
   
   loadGameData: async () => {
@@ -175,6 +191,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           currentWeather: saveData.currentWeatherId 
             ? get().weatherList.find(w => w.id === saveData.currentWeatherId) || null
             : null,
+          currentWind: saveData.currentWindCondition || null,
         });
       } else {
         get().newGame();
@@ -197,6 +214,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       warehouse: state.warehouse,
       ledger: state.ledger,
       currentWeatherId: state.currentWeather?.id || 'sunny',
+      currentWindCondition: state.currentWind,
       savedAt: Date.now(),
     };
     
@@ -211,6 +229,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const initial = createInitialSaveGame();
     const weatherList = get().weatherList;
     const weather = weatherList.length > 0 ? getRandomWeather(weatherList) : null;
+    const wind = generateWindCondition(initial.player.currentDay, initial.player.timeOfDay);
     
     set({
       player: initial.player,
@@ -220,6 +239,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       warehouse: initial.warehouse,
       ledger: [],
       currentWeather: weather,
+      currentWind: wind,
       selectedCommissions: [],
       selectedVehicle: null,
       selectedRoute: null,
@@ -229,6 +249,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       showEvent: false,
       currentTripId: null,
       pendingEvents: [],
+      currentPirateModifier: 1.0,
     });
     
     get().generateDailyCommissions();
@@ -319,12 +340,30 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({ selectedRoute: routeId });
   },
   
+  _refreshWindIfNeeded: () => {
+    const state = get();
+    if (!state.currentWind || 
+        state.currentWind.updatedDay !== state.player.currentDay || 
+        state.currentWind.updatedTimeOfDay !== state.player.timeOfDay) {
+      const newWind = generateWindCondition(state.player.currentDay, state.player.timeOfDay);
+      set({ currentWind: newWind });
+    }
+  },
+  
+  analyzeCurrentRouteWind: (): RouteWindAnalysis | null => {
+    const state = get();
+    const route = state.routes.find(r => r.id === state.selectedRoute);
+    if (!route || !state.currentWind) return null;
+    return analyzeRouteWind(route, state.currentWind, state.cities, 'yuegang');
+  },
+  
   startTrip: async () => {
     if (get().isDispatching) return false;
     set({ isDispatching: true });
     
     try {
       const state = get();
+      state._refreshWindIfNeeded();
       const { selectedCommissions, selectedVehicle, selectedRoute } = state;
       
       if (selectedCommissions.length === 0) {
@@ -343,6 +382,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const vehicle = state.vehicles.find(v => v.id === selectedVehicle);
       const route = state.routes.find(r => r.id === selectedRoute);
       const weather = state.currentWeather || state.weatherList[0];
+      const windAnalysis = state.analyzeCurrentRouteWind();
       
       if (!vehicle || !route) return false;
       
@@ -376,7 +416,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         return false;
       }
       
-      const routeCalc = calculateRouteTime(route, vehicle, weather);
+      const routeCalc = calculateRouteTime(route, vehicle, weather, windAnalysis || undefined);
       const tripCost = calculateTripCost(route, vehicle, routeCalc.totalTime);
       
       if (state.player.gold < tripCost) {
@@ -386,6 +426,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       
       const departureGameHours = calculateTotalGameHours(state.player.currentDay, state.player.timeOfDay);
       const etaGameHours = departureGameHours + routeCalc.totalTime;
+      
+      const pirateModifier = windAnalysis?.pirateModifier ?? 1.0;
+      set({ currentPirateModifier: pirateModifier });
       
       const trip: Trip = {
         id: generateId(),
@@ -403,6 +446,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         events: [],
         eventEffects: [],
         totalCost: tripCost,
+        windAlignment: windAnalysis?.alignment,
+        windAlignmentLabel: windAnalysis?.alignmentLabel,
       };
       
       const updatedVehicles = state.vehicles.map(v =>
@@ -435,6 +480,57 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
   
+  waitForWind: async (waitHours: number) => {
+    if (get().isWaitingForWind) return false;
+    if (waitHours <= 0) return false;
+    set({ isWaitingForWind: true, error: null });
+    
+    try {
+      const state = get();
+      let remainingHours = waitHours;
+      let currentPlayer = { ...state.player };
+      
+      const timeOrder: Array<'morning' | 'afternoon' | 'evening' | 'night'> = ['morning', 'afternoon', 'evening', 'night'];
+      const hoursPerSlot = 6;
+      
+      let newWind: WindCondition | null = state.currentWind;
+      let weatherChanged = false;
+      
+      while (remainingHours > 0) {
+        const advanceSlots = Math.min(Math.ceil(remainingHours / hoursPerSlot), timeOrder.length);
+        for (let i = 0; i < advanceSlots && remainingHours > 0; i++) {
+          currentPlayer = advanceTime(currentPlayer);
+          remainingHours -= hoursPerSlot;
+          if (currentPlayer.timeOfDay === 'morning') {
+            weatherChanged = true;
+          }
+        }
+        newWind = generateWindCondition(currentPlayer.currentDay, currentPlayer.timeOfDay);
+      }
+      
+      let newWeather = state.currentWeather;
+      if (weatherChanged && state.weatherList.length > 0) {
+        newWeather = getRandomWeather(state.weatherList);
+      }
+      
+      const newState = get();
+      set({
+        player: currentPlayer,
+        currentWind: newWind,
+        currentWeather: newWeather,
+        commissions: weatherChanged ? (() => {
+          get().generateDailyCommissions();
+          return get().commissions;
+        })() : newState.commissions,
+      });
+      
+      await get().saveGame();
+      return true;
+    } finally {
+      set({ isWaitingForWind: false });
+    }
+  },
+  
   processTripEvents: (tripId: string) => {
     const state = get();
     const trip = state.trips.find(t => t.id === tripId);
@@ -443,7 +539,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     const route = state.routes.find(r => r.id === trip.routeId);
     if (!route) return;
     
-    const allEvents = getRandomEvents(state.eventsList, route.type, 2);
+    const pirateModifier = state.currentPirateModifier || 1.0;
+    const allEvents = getRandomEvents(state.eventsList, route.type, 2, pirateModifier);
     
     set({
       currentTripId: tripId,
@@ -713,9 +810,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       get().generateDailyCommissions();
     }
     
+    const wind = generateWindCondition(newPlayer.currentDay, newPlayer.timeOfDay);
+    
     set({
       player: newPlayer,
       currentWeather: weather,
+      currentWind: wind,
     });
     
     get().saveGame();
